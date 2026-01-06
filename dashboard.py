@@ -273,6 +273,7 @@ def process_activities(activities):
 
 def main():
     st.title("📊 Polymarket Wallet Tracker")
+    # Updated: 2026-01-06 - Added colors, filters, and UI improvements
     st.markdown("---")
     
     # הצגת כתובת הארנק
