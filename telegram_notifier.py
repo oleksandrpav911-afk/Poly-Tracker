@@ -46,6 +46,34 @@ WALLETS = [
         'address': '0x006cc834cc092684f1b56626e23bedb3835c16ea',
         'name': '0x006cc'
     },
+    {
+        'address': '0xe734d5a008576905ec700019e530a7cc8da88f6a',
+        'name': 'G1MAIN'
+    },
+    {
+        'address': '0x31c518f864d1394361fec967b3daa9093a86ede4',
+        'name': 'BTCGambler247'
+    },
+    {
+        'address': '0xafbacaeeda63f31202759eff7f8126e49adfe61b',
+        'name': 'SammySledge'
+    },
+    {
+        'address': '0x57980cb96a8ffd43eb71cd94947de3f5c768ab44',
+        'name': 'HighOdds'
+    },
+    {
+        'address': '0x43372356634781eea88d61bbdd7824cdce958882',
+        'name': 'Anjun'
+    },
+    {
+        'address': '0xc29e1cef4256f423e5a3e713d886bd25f98da2ca',
+        'name': 'NFL_Guy2'
+    },
+    {
+        'address': '0x1b5e20a28d7115f10ce6190a5ae9a91169be83f8',
+        'name': 'ButtersS'
+    },
 ]
 
 # שמירת תאימות לאחור - הארנק הראשון
