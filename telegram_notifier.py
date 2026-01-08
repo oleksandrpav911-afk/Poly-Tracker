@@ -15,7 +15,41 @@ if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-WALLET_ADDRESS = "0x16b29c50f2439faf627209b2ac0c7bbddaa8a881"
+# רשימת ארנקים למעקב - ניתן להוסיף עוד ארנקים כאן
+# פורמט: {'address': '0x...', 'name': 'שם הארנק'}
+WALLETS = [
+    {
+        'address': '0x16b29c50f2439faf627209b2ac0c7bbddaa8a881',
+        'name': 'SeriouslySirius'
+    },
+    {
+        'address': '0x1bc0d88ca86b9049cf05d642e634836d5ddf4429',
+        'name': '21212121'
+    },
+    {
+        'address': '0x2c335066fe58fe9237c3d3dc7b275c2a034a0563',
+        'name': '0x2c33'
+    },
+    {
+        'address': '0x03524d9d00cffe5004d1d270edfea7b3109e3292',
+        'name': 'Woyaofadacaila'
+    },
+    {
+        'address': '0x9cb990f1862568a63d8601efeebe0304225c32f2',
+        'name': 'jtwyslljy'
+    },
+    {
+        'address': '0xe74a4446efd66a4de690962938f550d8921a40ee',
+        'name': '0xe74A44'
+    },
+    {
+        'address': '0x006cc834cc092684f1b56626e23bedb3835c16ea',
+        'name': '0x006cc'
+    },
+]
+
+# שמירת תאימות לאחור - הארנק הראשון
+WALLET_ADDRESS = WALLETS[0]['address'] if WALLETS else ""
 DATA_API_BASE = "https://data-api.polymarket.com"
 
 # הגדרות טלגרם
@@ -198,6 +232,9 @@ class TelegramNotifier:
         # זיהוי סוג ספורט
         sport_type = detect_sport_type(slug, event_slug, title)
         
+        # זיהוי שם הארנק מהעסקה (אם יש)
+        wallet_name = trade.get('wallet_name', 'SeriouslySirius')
+        
         message = f"""
 {side_emoji} <b>{side_text} - {sport_type}</b>
 
@@ -207,7 +244,7 @@ class TelegramNotifier:
 📊 Odds: {decimal_odds:.3f}
 
 ⏰ זמן: {time_str}
-🔗 ארנק: SeriouslySirius
+🔗 ארנק: {wallet_name}
 """
         return message.strip()
     
@@ -234,7 +271,12 @@ class TelegramNotifier:
             return False
         
         # בדיקה אם כבר נשלחה התראה על העסקה הזו
-        trade_id = f"{trade.get('transactionHash', '')}_{trade.get('timestamp', '')}"
+        # שימוש ב-wallet_address אם יש (לתמיכה במספר ארנקים)
+        wallet_address = trade.get('wallet_address', '')
+        if wallet_address:
+            trade_id = f"{wallet_address}_{trade.get('transactionHash', '')}_{trade.get('timestamp', '')}"
+        else:
+            trade_id = f"{trade.get('transactionHash', '')}_{trade.get('timestamp', '')}"
         if trade_id in self.processed_trades:
             return False
         
@@ -248,7 +290,12 @@ class TelegramNotifier:
             if self.should_notify(activity):
                 message = self.format_trade_message(activity)
                 if self.send_message(message):
-                    trade_id = f"{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
+                    # שימוש ב-wallet_address אם יש (לתמיכה במספר ארנקים)
+                    wallet_address = activity.get('wallet_address', '')
+                    if wallet_address:
+                        trade_id = f"{wallet_address}_{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
+                    else:
+                        trade_id = f"{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
                     self.processed_trades.add(trade_id)
                     notified_count += 1
                     time.sleep(0.5)  # מניעת spam

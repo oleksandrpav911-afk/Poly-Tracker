@@ -19,8 +19,11 @@ st.set_page_config(
     layout="wide"
 )
 
-# כתובת הארנק
-WALLET_ADDRESS = "0x16b29c50f2439faf627209b2ac0c7bbddaa8a881"
+# ייבוא רשימת ארנקים מ-telegram_notifier.py (מקור אמת אחד)
+from telegram_notifier import WALLETS
+
+# שמירת תאימות לאחור - הארנק הראשון
+WALLET_ADDRESS = WALLETS[0]['address'] if WALLETS else ""
 DATA_API_BASE = "https://data-api.polymarket.com"
 
 @st.cache_data(ttl=60)  # Cache לדקה אחת בלבד
@@ -276,10 +279,39 @@ def main():
     # Updated: 2026-01-06 - Added colors, filters, and UI improvements
     st.markdown("---")
     
+    # בחירת ארנק
+    if len(WALLETS) > 1:
+        wallet_names = [f"{w['name']} ({w['address'][:10]}...)" for w in WALLETS]
+        wallet_names.append("כל הארנקים")
+        selected_wallet_idx = st.selectbox("בחר ארנק:", range(len(wallet_names)), format_func=lambda x: wallet_names[x])
+        
+        if selected_wallet_idx < len(WALLETS):
+            # ארנק ספציפי
+            selected_wallet = WALLETS[selected_wallet_idx]
+            wallet_address = selected_wallet['address']
+            wallet_name = selected_wallet['name']
+            show_all = False
+        else:
+            # כל הארנקים
+            wallet_address = None
+            wallet_name = "כל הארנקים"
+            show_all = True
+    else:
+        # רק ארנק אחד
+        selected_wallet = WALLETS[0]
+        wallet_address = selected_wallet['address']
+        wallet_name = selected_wallet['name']
+        show_all = False
+    
     # הצגת כתובת הארנק
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown(f"**כתובת ארנק:** `{WALLET_ADDRESS}`")
+        if show_all:
+            st.markdown(f"**מעקב אחר {len(WALLETS)} ארנקים:**")
+            for w in WALLETS:
+                st.markdown(f"- `{w['address']}` ({w['name']})")
+        else:
+            st.markdown(f"**כתובת ארנק:** `{wallet_address}` ({wallet_name})")
     with col2:
         if st.button("🔄 רענון נתונים"):
             st.cache_data.clear()
@@ -289,7 +321,19 @@ def main():
     
     # טעינת נתונים
     with st.spinner("מביא נתונים..."):
-        activities = get_user_activity(WALLET_ADDRESS)
+        if show_all:
+            # איסוף נתונים מכל הארנקים
+            all_activities = []
+            for wallet in WALLETS:
+                wallet_activities = get_user_activity(wallet['address'])
+                # הוספת שם הארנק לכל פעילות
+                for activity in wallet_activities:
+                    activity['wallet_name'] = wallet['name']
+                    activity['wallet_address'] = wallet['address']
+                all_activities.extend(wallet_activities)
+            activities = all_activities
+        else:
+            activities = get_user_activity(wallet_address)
     
     if not activities:
         st.warning("לא נמצאו פעילויות עבור ארנק זה")
@@ -337,9 +381,48 @@ def main():
         if 'total_invested_usdc' in display_positions.columns:
             display_positions = display_positions[display_positions['total_invested_usdc'] > 500]
         
+        # סינון רק פוזיציות עם last_trade_time מהיום
+        before_date_filter = len(display_positions)
+        if 'last_trade_time' in display_positions.columns:
+            # קבלת תאריך היום (ישראל timezone)
+            israel_offset = timedelta(hours=2)
+            israel_tz = timezone(israel_offset)
+            today = datetime.now(israel_tz).date()
+            
+            # סינון רק פוזיציות עם last_trade_time מהיום
+            def is_today(trade_time):
+                if pd.isna(trade_time):
+                    return False
+                try:
+                    # המרה ל-timezone מקומי אם צריך
+                    if isinstance(trade_time, pd.Timestamp):
+                        if trade_time.tz is None:
+                            local_time = trade_time.tz_localize(timezone.utc).tz_convert(israel_tz)
+                        else:
+                            local_time = trade_time.tz_convert(israel_tz)
+                        return local_time.date() == today
+                    else:
+                        # אם זה datetime רגיל
+                        if hasattr(trade_time, 'tzinfo') and trade_time.tzinfo is not None:
+                            local_time = trade_time.astimezone(israel_tz)
+                        else:
+                            local_time = trade_time.replace(tzinfo=timezone.utc).astimezone(israel_tz)
+                        return local_time.date() == today
+                except:
+                    return False
+            
+            display_positions = display_positions[display_positions['last_trade_time'].apply(is_today)]
+        
         # הודעה אם יש סינון
         if original_count > len(display_positions):
-            st.info(f"📊 מוצגות רק פוזיציות עם השקעה מעל $500 ({len(display_positions)} מתוך {original_count})")
+            messages = []
+            if before_date_filter > len(display_positions):
+                messages.append(f"עם עסקאות מהיום")
+            if original_count > before_date_filter:
+                messages.append(f"עם השקעה מעל $500")
+            
+            filter_msg = " ו-".join(messages) if messages else ""
+            st.info(f"📊 מוצגות רק פוזיציות {filter_msg} ({len(display_positions)} מתוך {original_count})")
         
         # הצגת סיכום
         if not display_positions.empty:
@@ -442,10 +525,11 @@ def main():
         
         # הורדת פוזיציות
         csv_positions = display_positions.to_csv(index=False, encoding='utf-8-sig')
+        wallet_id = wallet_name if not show_all else "all_wallets"
         st.download_button(
             label="📥 הורד פוזיציות CSV",
             data=csv_positions,
-            file_name=f"positions_{WALLET_ADDRESS[:10]}.csv",
+            file_name=f"positions_{wallet_id}.csv",
             mime="text/csv",
             key="download_positions"
         )
@@ -640,10 +724,11 @@ def main():
     col1, col2 = st.columns(2)
     with col1:
         csv = df.to_csv(index=False, encoding='utf-8-sig')
+        wallet_id = wallet_name if not show_all else "all_wallets"
         st.download_button(
             label="📥 הורד CSV",
             data=csv,
-            file_name=f"wallet_{WALLET_ADDRESS[:10]}_data.csv",
+            file_name=f"wallet_{wallet_id}_data.csv",
             mime="text/csv"
         )
     with col2:
@@ -651,7 +736,7 @@ def main():
         st.download_button(
             label="📥 הורד JSON",
             data=json_str,
-            file_name=f"wallet_{WALLET_ADDRESS[:10]}_data.json",
+            file_name=f"wallet_{wallet_id}_data.json",
             mime="application/json"
         )
 

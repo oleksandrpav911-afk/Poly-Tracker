@@ -22,7 +22,7 @@ if sys.platform == 'win32' and hasattr(sys.stdout, 'buffer'):
         pass
 
 # ייבוא מהקובץ הראשי
-from telegram_notifier import TelegramNotifier, get_user_activity, WALLET_ADDRESS
+from telegram_notifier import TelegramNotifier, get_user_activity, WALLETS
 
 # ייבוא ישירות מ-telegram_notifier (הערכים כבר מוגדרים שם)
 import telegram_notifier
@@ -61,53 +61,70 @@ class TradeMonitor:
             print(f"שגיאה בשמירת עסקאות מעובדות: {e}")
     
     def check_new_trades(self):
-        """בדיקת עסקאות חדשות"""
+        """בדיקת עסקאות חדשות לכל הארנקים"""
         print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] בודק עסקאות חדשות...")
-        
-        activities = get_user_activity(WALLET_ADDRESS)
-        
-        if not activities:
-            print("לא נמצאו פעילויות")
-            return
         
         # טעינה מחדש של העסקאות המעובדות (למקרה שתהליך אחר עדכן)
         self._load_processed_trades()
         
-        # מיון לפי זמן
-        activities.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+        total_notified = 0
         
-        # סינון רק עסקאות חדשות
-        new_activities = []
-        for activity in activities:
-            trade_id = f"{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
-            if trade_id not in self.processed_trade_ids:
-                new_activities.append(activity)
-        
-        if new_activities:
-            print(f"נמצאו {len(new_activities)} עסקאות חדשות")
+        # מעבר על כל הארנקים
+        for wallet in WALLETS:
+            wallet_address = wallet['address']
+            wallet_name = wallet['name']
             
-            # שליחת התראות
-            notified = 0
-            for activity in new_activities:
-                trade_id = f"{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
+            print(f"\n🔍 בודק ארנק: {wallet_name} ({wallet_address[:10]}...)")
+            
+            activities = get_user_activity(wallet_address)
+            
+            if not activities:
+                print(f"  לא נמצאו פעילויות עבור {wallet_name}")
+                continue
+            
+            # הוספת שם הארנק לכל פעילות
+            for activity in activities:
+                activity['wallet_name'] = wallet_name
+                activity['wallet_address'] = wallet_address
+            
+            # מיון לפי זמן
+            activities.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+            
+            # סינון רק עסקאות חדשות (עם מפתח ייחודי לכל ארנק)
+            new_activities = []
+            for activity in activities:
+                trade_id = f"{wallet_address}_{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
+                if trade_id not in self.processed_trade_ids:
+                    new_activities.append(activity)
+            
+            if new_activities:
+                print(f"  נמצאו {len(new_activities)} עסקאות חדשות")
                 
-                # בדיקה כפולה - גם ב-notifier וגם כאן
-                if self.notifier.should_notify(activity):
-                    message = self.notifier.format_trade_message(activity)
-                    if self.notifier.send_message(message):
-                        # סימון כמעובד גם כאן וגם ב-notifier
-                        self.processed_trade_ids.add(trade_id)
-                        self.notifier.processed_trades.add(trade_id)
-                        notified += 1
-                        time.sleep(0.5)  # מניעת spam
-            
-            # שמירת העסקאות המעובדות
-            if notified > 0:
-                self._save_processed_trades()
-            
-            print(f"✓ נשלחו {notified} התראות")
-        else:
-            print("אין עסקאות חדשות")
+                # שליחת התראות
+                notified = 0
+                for activity in new_activities:
+                    trade_id = f"{wallet_address}_{activity.get('transactionHash', '')}_{activity.get('timestamp', '')}"
+                    
+                    # בדיקה כפולה - גם ב-notifier וגם כאן
+                    if self.notifier.should_notify(activity):
+                        message = self.notifier.format_trade_message(activity)
+                        if self.notifier.send_message(message):
+                            # סימון כמעובד גם כאן וגם ב-notifier
+                            self.processed_trade_ids.add(trade_id)
+                            self.notifier.processed_trades.add(trade_id)
+                            notified += 1
+                            time.sleep(0.5)  # מניעת spam
+                
+                total_notified += notified
+                print(f"  ✓ נשלחו {notified} התראות עבור {wallet_name}")
+            else:
+                print(f"  אין עסקאות חדשות עבור {wallet_name}")
+        
+        # שמירת העסקאות המעובדות
+        if total_notified > 0:
+            self._save_processed_trades()
+        
+        print(f"\n✓ סה\"כ נשלחו {total_notified} התראות מכל הארנקים")
 
 def main():
     """פונקציה ראשית"""
@@ -140,8 +157,10 @@ def main():
     print("=" * 60)
     print("מעקב רציף עם התראות טלגרם")
     print("=" * 60)
-    print(f"\nכתובת ארנק: {WALLET_ADDRESS}")
-    print(f"סוגי ספורט: {', '.join(ALLOWED_SPORTS)}")
+    print(f"\nמספר ארנקים למעקב: {len(WALLETS)}")
+    for i, wallet in enumerate(WALLETS, 1):
+        print(f"  {i}. {wallet['name']} ({wallet['address'][:10]}...)")
+    print(f"\nסוגי ספורט: {', '.join(ALLOWED_SPORTS)}")
     print(f"סכום מינימלי: ${MIN_TRADE_SIZE_USDC} USDC")
     print(f"תדירות בדיקה: כל 5 דקות")
     print("\nלעצירה: Ctrl+C")

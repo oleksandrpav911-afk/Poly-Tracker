@@ -7,6 +7,7 @@ import schedule
 import time
 from datetime import datetime
 from position_tracker import PositionTracker
+from telegram_notifier import WALLETS
 import sys
 
 # תיקון encoding - רק אם stdout פתוח
@@ -23,8 +24,10 @@ def main():
     print("=" * 60)
     print("מעקב רציף אחר שינויים בפוזיציות")
     print("=" * 60)
-    print(f"\nכתובת ארנק: 0x16b29c50f2439faf627209b2ac0c7bbddaa8a881")
-    print(f"תדירות בדיקה: כל 10 דקות")
+    print(f"\nמספר ארנקים למעקב: {len(WALLETS)}")
+    for i, wallet in enumerate(WALLETS, 1):
+        print(f"  {i}. {wallet['name']} ({wallet['address'][:10]}...)")
+    print(f"\nתדירות בדיקה: כל 10 דקות")
     print("\nלעצירה: Ctrl+C")
     print("=" * 60)
     

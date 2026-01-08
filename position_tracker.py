@@ -199,7 +199,10 @@ def process_activities(activities):
     return df, stats, positions_df
 
 # הגדרות
-WALLET_ADDRESS = "0x16b29c50f2439faf627209b2ac0c7bbddaa8a881"
+# רשימת ארנקים למעקב - צריך להיות זהה ל-telegram_notifier.py
+from telegram_notifier import WALLETS
+WALLET_ADDRESS = WALLETS[0]['address'] if WALLETS else ""  # תאימות לאחור
+
 POSITIONS_FILE = "positions_snapshot.json"
 MIN_POSITION_VALUE_USDC = 5000  # סכום מינימלי לפוזיציה להתראה
 ALLOWED_SPORTS = ["NBA", "Soccer"]  # סוגי ספורט למעקב
@@ -211,18 +214,35 @@ class PositionTracker:
         self.notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else None
         self.positions_file = POSITIONS_FILE
     
-    def load_previous_positions(self) -> Dict:
-        """טעינת פוזיציות קודמות"""
+    def load_previous_positions(self, wallet_address: str = "") -> Dict:
+        """טעינת פוזיציות קודמות לארנק ספציפי"""
         if os.path.exists(self.positions_file):
             try:
                 with open(self.positions_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # תמיכה בפורמט ישן (ללא wallets)
+                    if 'wallets' in data:
+                        return data['wallets'].get(wallet_address, {})
+                    else:
+                        # פורמט ישן - תאימות לאחור
+                        return data
             except:
                 return {}
         return {}
     
-    def save_positions(self, positions_df, timestamp: str):
-        """שמירת פוזיציות נוכחיות"""
+    def save_positions(self, positions_df, timestamp: str, wallet_address: str = ""):
+        """שמירת פוזיציות נוכחיות - עם תמיכה במספר ארנקים"""
+        # טעינת נתונים קיימים
+        all_positions = {}
+        if os.path.exists(self.positions_file):
+            try:
+                with open(self.positions_file, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    all_positions = existing_data.get('wallets', {})
+            except:
+                all_positions = {}
+        
+        # שמירת פוזיציות לארנק הנוכחי
         positions_dict = {}
         if not positions_df.empty:
             for _, row in positions_df.iterrows():
@@ -240,9 +260,15 @@ class PositionTracker:
                     'decimal_odds_buy': float(row.get('decimal_odds_buy', 0)),
                 }
         
-        data = {
+        # עדכון הפוזיציות של הארנק הנוכחי
+        all_positions[wallet_address] = {
             'timestamp': timestamp,
             'positions': positions_dict
+        }
+        
+        data = {
+            'timestamp': timestamp,
+            'wallets': all_positions
         }
         
         with open(self.positions_file, 'w', encoding='utf-8') as f:
@@ -285,6 +311,9 @@ class PositionTracker:
             emoji = "📊"
             change_text = "שינוי בפוזיציה"
         
+        # זיהוי שם הארנק (אם יש)
+        wallet_name = position.get('wallet_name', 'SeriouslySirius')
+        
         message = f"""
 {emoji} <b>{change_text} - {sport_type}</b>
 
@@ -294,7 +323,7 @@ class PositionTracker:
 📊 Odds: {decimal_odds:.3f}
 
 ⏰ זמן: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-🔗 ארנק: SeriouslySirius
+🔗 ארנק: {wallet_name}
 """
         return message.strip()
     
@@ -376,112 +405,136 @@ class PositionTracker:
         return changes
     
     def check_and_notify(self):
-        """בדיקת שינויים ושליחת התראות"""
+        """בדיקת שינויים ושליחת התראות לכל הארנקים"""
         print("🔍 בודק שינויים בפוזיציות...")
         
-        # טעינת פוזיציות קודמות
-        previous_positions = self.load_previous_positions()
+        total_changes_all = 0
         
-        # קבלת פעילות נוכחית
-        activities = get_user_activity(WALLET_ADDRESS)
-        if not activities:
-            print("לא נמצאו פעילויות")
-            return
-        
-        # עיבוד נתונים
-        df, stats, positions_df = process_activities(activities)
-        
-        # המרת פוזיציות ל-dict
-        current_positions = {}
-        if not positions_df.empty:
-            for _, row in positions_df.iterrows():
-                key = f"{row.get('conditionId', '')}_{row.get('outcomeIndex', '')}"
-                current_positions[key] = {
-                    'conditionId': row.get('conditionId', ''),
-                    'outcomeIndex': row.get('outcomeIndex', ''),
-                    'title': row.get('title', 'N/A'),
-                    'outcome': row.get('outcome', 'N/A'),
-                    'sport_type': row.get('sport_type', 'Unknown'),
-                    'net_position': float(row.get('net_position', 0)),
-                    'total_invested_usdc': float(row.get('total_invested_usdc', 0)),
-                    'current_price': float(row.get('current_price', 0)),
-                    'avg_buy_price': float(row.get('avg_buy_price', 0)),
-                    'decimal_odds_buy': float(row.get('decimal_odds_buy', 0)),
-                }
-        
-        # זיהוי שינויים
-        if previous_positions:
-            changes = self.detect_significant_changes(current_positions, previous_positions)
+        # מעבר על כל הארנקים
+        for wallet in WALLETS:
+            wallet_address = wallet['address']
+            wallet_name = wallet['name']
             
-            if changes:
-                print(f"✓ נמצאו {len(changes)} שינויים משמעותיים")
+            print(f"\n🔍 בודק ארנק: {wallet_name} ({wallet_address[:10]}...)")
+            
+            # טעינת פוזיציות קודמות לארנק זה
+            previous_positions = self.load_previous_positions(wallet_address)
+            
+            # קבלת פעילות נוכחית
+            activities = get_user_activity(wallet_address)
+            if not activities:
+                print(f"  לא נמצאו פעילויות עבור {wallet_name}")
+                # שמירת פוזיציות ריקות לארנק זה
+                timestamp = datetime.now().isoformat()
+                import pandas as pd
+                empty_df = pd.DataFrame()
+                self.save_positions(empty_df, timestamp, wallet_address)
+                continue
+            
+            # עיבוד נתונים
+            df, stats, positions_df = process_activities(activities)
+            
+            # המרת פוזיציות ל-dict עם שם הארנק
+            current_positions = {}
+            if not positions_df.empty:
+                for _, row in positions_df.iterrows():
+                    key = f"{row.get('conditionId', '')}_{row.get('outcomeIndex', '')}"
+                    current_positions[key] = {
+                        'conditionId': row.get('conditionId', ''),
+                        'outcomeIndex': row.get('outcomeIndex', ''),
+                        'title': row.get('title', 'N/A'),
+                        'outcome': row.get('outcome', 'N/A'),
+                        'sport_type': row.get('sport_type', 'Unknown'),
+                        'net_position': float(row.get('net_position', 0)),
+                        'total_invested_usdc': float(row.get('total_invested_usdc', 0)),
+                        'current_price': float(row.get('current_price', 0)),
+                        'avg_buy_price': float(row.get('avg_buy_price', 0)),
+                        'decimal_odds_buy': float(row.get('decimal_odds_buy', 0)),
+                        'wallet_name': wallet_name,  # הוספת שם הארנק
+                    }
+            
+            # זיהוי שינויים
+            if previous_positions and 'positions' in previous_positions:
+                changes = self.detect_significant_changes(current_positions, previous_positions)
                 
-                # שליחת התראות
-                if self.notifier:
-                    sent_count = 0
-                    for i, change in enumerate(changes, 1):
-                        message = self.format_position_change_message(
-                            change['type'],
-                            change['position'],
-                            change['old_position']
-                        )
-                        result = self.notifier.send_message(message)
-                        if result:
-                            sent_count += 1
-                            print(f"  ✓ נשלחה הודעה {i}/{len(changes)}")
-                        else:
-                            print(f"  ❌ שגיאה בשליחת הודעה {i}/{len(changes)}")
-                        import time
-                        time.sleep(0.5)  # מניעת spam
-                    print(f"✓ סה\"כ נשלחו {sent_count}/{len(changes)} התראות")
+                if changes:
+                    print(f"  ✓ נמצאו {len(changes)} שינויים משמעותיים")
+                    total_changes_all += len(changes)
+                    
+                    # שליחת התראות
+                    if self.notifier:
+                        sent_count = 0
+                        for i, change in enumerate(changes, 1):
+                            # הוספת שם הארנק לפוזיציה
+                            change['position']['wallet_name'] = wallet_name
+                            message = self.format_position_change_message(
+                                change['type'],
+                                change['position'],
+                                change['old_position']
+                            )
+                            result = self.notifier.send_message(message)
+                            if result:
+                                sent_count += 1
+                                print(f"    ✓ נשלחה הודעה {i}/{len(changes)}")
+                            else:
+                                print(f"    ❌ שגיאה בשליחת הודעה {i}/{len(changes)}")
+                            import time
+                            time.sleep(0.5)  # מניעת spam
+                        print(f"  ✓ סה\"כ נשלחו {sent_count}/{len(changes)} התראות עבור {wallet_name}")
+                    else:
+                        print("  ⚠️ טלגרם לא מוגדר - לא נשלחו התראות")
                 else:
-                    print("⚠️ טלגרם לא מוגדר - לא נשלחו התראות")
+                    print(f"  אין שינויים משמעותיים עבור {wallet_name}")
             else:
-                print("אין שינויים משמעותיים")
-        else:
-            print("אין פוזיציות קודמות - זהו הריצה הראשונה")
-            # בפעם הראשונה - שליחת כל הפוזיציות מעל $5,000 (רק NBA ו-Soccer)
-            threshold = MIN_POSITION_VALUE_USDC
-            positions_above_threshold = [
-                pos for pos in current_positions.values() 
-                if pos['total_invested_usdc'] >= threshold and pos.get('sport_type', 'Unknown') in ALLOWED_SPORTS
-            ]
-            
-            if positions_above_threshold:
-                print(f"✓ נמצאו {len(positions_above_threshold)} פוזיציות מעל ${threshold:,}")
+                print(f"  אין פוזיציות קודמות עבור {wallet_name} - זהו הריצה הראשונה")
+                # בפעם הראשונה - שליחת כל הפוזיציות מעל $5,000 (רק NBA ו-Soccer)
+                threshold = MIN_POSITION_VALUE_USDC
+                positions_above_threshold = [
+                    pos for pos in current_positions.values() 
+                    if pos['total_invested_usdc'] >= threshold and pos.get('sport_type', 'Unknown') in ALLOWED_SPORTS
+                ]
                 
-                if self.notifier:
-                    sent_count = 0
-                    for i, pos in enumerate(positions_above_threshold, 1):
-                        message = self.format_position_change_message(
-                            'new_above_threshold',
-                            pos,
-                            None
-                        )
-                        result = self.notifier.send_message(message)
-                        if result:
-                            sent_count += 1
-                            print(f"  ✓ נשלחה הודעה {i}/{len(positions_above_threshold)}")
-                        else:
-                            print(f"  ❌ שגיאה בשליחת הודעה {i}/{len(positions_above_threshold)}")
-                        import time
-                        time.sleep(0.5)  # מניעת spam
-                    print(f"✓ סה\"כ נשלחו {sent_count}/{len(positions_above_threshold)} התראות")
-                else:
-                    print("⚠️ טלגרם לא מוגדר - לא נשלחו התראות")
+                if positions_above_threshold:
+                    print(f"  ✓ נמצאו {len(positions_above_threshold)} פוזיציות מעל ${threshold:,}")
+                    total_changes_all += len(positions_above_threshold)
+                    
+                    if self.notifier:
+                        sent_count = 0
+                        for i, pos in enumerate(positions_above_threshold, 1):
+                            pos['wallet_name'] = wallet_name
+                            message = self.format_position_change_message(
+                                'new_above_threshold',
+                                pos,
+                                None
+                            )
+                            result = self.notifier.send_message(message)
+                            if result:
+                                sent_count += 1
+                                print(f"    ✓ נשלחה הודעה {i}/{len(positions_above_threshold)}")
+                            else:
+                                print(f"    ❌ שגיאה בשליחת הודעה {i}/{len(positions_above_threshold)}")
+                            import time
+                            time.sleep(0.5)  # מניעת spam
+                        print(f"  ✓ סה\"כ נשלחו {sent_count}/{len(positions_above_threshold)} התראות עבור {wallet_name}")
+                    else:
+                        print("  ⚠️ טלגרם לא מוגדר - לא נשלחו התראות")
+            
+            # שמירת פוזיציות נוכחיות לארנק זה
+            timestamp = datetime.now().isoformat()
+            self.save_positions(positions_df, timestamp, wallet_address)
+            print(f"  ✓ פוזיציות נשמרו עבור {wallet_name}")
         
-        # שמירת פוזיציות נוכחיות
-        timestamp = datetime.now().isoformat()
-        self.save_positions(positions_df, timestamp)
-        print(f"✓ פוזיציות נשמרו")
+        print(f"\n✓ סה\"כ נמצאו {total_changes_all} שינויים מכל הארנקים")
 
 def main():
     """פונקציה ראשית"""
     print("=" * 60)
     print("מעקב אחר שינויים בפוזיציות")
     print("=" * 60)
-    print(f"\nכתובת ארנק: {WALLET_ADDRESS}")
-    print(f"סף מינימלי: ${MIN_POSITION_VALUE_USDC:,}")
+    print(f"\nמספר ארנקים למעקב: {len(WALLETS)}")
+    for i, wallet in enumerate(WALLETS, 1):
+        print(f"  {i}. {wallet['name']} ({wallet['address'][:10]}...)")
+    print(f"\nסף מינימלי: ${MIN_POSITION_VALUE_USDC:,}")
     print(f"סוגי ספורט: {', '.join(ALLOWED_SPORTS)}")
     print("=" * 60)
     
